@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -45,9 +45,13 @@ func main() {
 	go rem.Cleanup(ctx, 1*time.Minute)
 
 	msgCh, errCh := cli.Events(ctx, events.ListOptions{})
+	logger.Info("event stream connected")
 	for {
 		select {
 		case event := <-msgCh:
+			if event.Type == events.ContainerEventType {
+				logger.Debug("container event", "action", event.Action, "service", event.Actor.Attributes["com.docker.swarm.service.name"])
+			}
 			rem.HandleEvent(ctx, event)
 		case err := <-errCh:
 			if ctx.Err() != nil {
