@@ -149,9 +149,27 @@ func (r *Remediator) drainNode(ctx context.Context, nodeID, serviceName string) 
 	if nodeID == "" {
 		return
 	}
+
+	// Safety: never drain the last active manager
+	nodes, err := r.client.NodeList(ctx, types.NodeListOptions{})
+	if err != nil {
+		return
+	}
+	activeManagers := 0
+	for _, n := range nodes {
+		if n.Spec.Role == swarm.NodeRoleManager && n.Spec.Availability == swarm.NodeAvailabilityActive {
+			activeManagers++
+		}
+	}
+
 	node, _, err := r.client.NodeInspectWithRaw(ctx, nodeID)
 	if err != nil {
 		r.logger.Error("node inspect failed", "node", nodeID, "error", err)
+		return
+	}
+
+	if node.Spec.Role == swarm.NodeRoleManager && activeManagers <= 1 {
+		r.logger.Warn("skipping drain — this is the last active manager", "node", nodeID, "service", serviceName)
 		return
 	}
 
