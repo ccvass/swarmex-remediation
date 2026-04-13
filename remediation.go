@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
 )
@@ -27,8 +28,10 @@ func (l EscalationLevel) String() string {
 }
 
 const (
-	labelEnabled   = "swarmex.remediation.enabled"
-	labelThreshold = "swarmex.remediation.failure-threshold"
+	labelEnabled       = "swarmex.remediation.enabled"
+	labelThreshold     = "swarmex.remediation.failure-threshold"
+	labelMinAvailable  = "swarmex.disruption.min-available"
+	labelMaxUnavail    = "swarmex.disruption.max-unavailable"
 
 	defaultThreshold = 5
 	decayInterval    = 5 * time.Minute // failures decay after this period of no new failures
@@ -120,7 +123,11 @@ func (r *Remediator) recordFailure(ctx context.Context, serviceID, nodeID string
 	case LevelRestart:
 		r.forceUpdate(ctx, serviceID, svc)
 	case LevelForceRestart:
-		r.forceUpdate(ctx, serviceID, svc)
+		if r.canDisruptService(ctx, svc) {
+			r.forceUpdate(ctx, serviceID, svc)
+		} else {
+			r.logger.Warn("force-restart blocked by disruption budget", "service", svc.Spec.Name)
+		}
 	case LevelDrainNode:
 		r.drainNode(ctx, nodeID, svc.Spec.Name)
 	}
@@ -147,6 +154,12 @@ func (r *Remediator) forceUpdate(ctx context.Context, serviceID string, svc swar
 
 func (r *Remediator) drainNode(ctx context.Context, nodeID, serviceName string) {
 	if nodeID == "" {
+		return
+	}
+
+	// Check disruption budgets for all services on this node
+	if !r.canDisruptNode(ctx, nodeID) {
+		r.logger.Warn("drain blocked by disruption budget", "node", nodeID, "service", serviceName)
 		return
 	}
 
@@ -180,6 +193,73 @@ func (r *Remediator) drainNode(ctx context.Context, nodeID, serviceName string) 
 		return
 	}
 	r.logger.Warn(fmt.Sprintf("node %s drained due to persistent failures in service %s", nodeID, serviceName))
+}
+
+// canDisruptNode checks disruption budgets for all services with tasks on this node.
+func (r *Remediator) canDisruptNode(ctx context.Context, nodeID string) bool {
+	services, err := r.client.ServiceList(ctx, types.ServiceListOptions{})
+	if err != nil {
+		return true // fail open
+	}
+	for _, svc := range services {
+		minAvailStr := svc.Spec.Labels[labelMinAvailable]
+		if minAvailStr == "" {
+			continue
+		}
+		minAvail, ok := parseThreshold(minAvailStr)
+		if !ok {
+			continue
+		}
+		// Count running tasks NOT on this node
+		tasks, err := r.client.TaskList(ctx, types.TaskListOptions{
+			Filters: filters.NewArgs(filters.Arg("service", svc.ID), filters.Arg("desired-state", "running")),
+		})
+		if err != nil {
+			continue
+		}
+		surviving := 0
+		for _, t := range tasks {
+			if t.NodeID != nodeID && t.Status.State == swarm.TaskStateRunning {
+				surviving++
+			}
+		}
+		if surviving < minAvail {
+			r.logger.Warn("disruption budget violated",
+				"service", svc.Spec.Name, "min_available", minAvail, "surviving", surviving)
+			return false
+		}
+	}
+	return true
+}
+
+// canDisruptService checks if force-updating a service respects max-unavailable.
+func (r *Remediator) canDisruptService(ctx context.Context, svc swarm.Service) bool {
+	maxUnavailStr := svc.Spec.Labels[labelMaxUnavail]
+	if maxUnavailStr == "" {
+		return true
+	}
+	maxUnavail, ok := parseThreshold(maxUnavailStr)
+	if !ok {
+		return true
+	}
+	tasks, err := r.client.TaskList(ctx, types.TaskListOptions{
+		Filters: filters.NewArgs(filters.Arg("service", svc.ID), filters.Arg("desired-state", "running")),
+	})
+	if err != nil {
+		return true
+	}
+	running := 0
+	for _, t := range tasks {
+		if t.Status.State == swarm.TaskStateRunning {
+			running++
+		}
+	}
+	desired := 1
+	if svc.Spec.Mode.Replicated != nil && svc.Spec.Mode.Replicated.Replicas != nil {
+		desired = int(*svc.Spec.Mode.Replicated.Replicas)
+	}
+	unavailable := desired - running
+	return unavailable < maxUnavail
 }
 
 // Cleanup removes stale failure records periodically.
