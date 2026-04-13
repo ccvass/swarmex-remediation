@@ -60,13 +60,13 @@ func New(cli *client.Client, logger *slog.Logger) *Remediator {
 // HandleEvent processes Docker health and task state events.
 func (r *Remediator) HandleEvent(ctx context.Context, event events.Message) {
 	switch {
-	case event.Type == events.ContainerEventType && event.Action == "health_status: unhealthy":
+	case event.Type == events.ContainerEventType && string(event.Action) == "health_status: unhealthy" || string(event.Action) == "health_status":
 		serviceID := event.Actor.Attributes["com.docker.swarm.service.id"]
 		nodeID := event.Actor.Attributes["com.docker.swarm.node.id"]
 		if serviceID != "" {
 			r.recordFailure(ctx, serviceID, nodeID)
 		}
-	case event.Type == "task" && (event.Action == "die" || event.Action == "kill"):
+	case event.Type == events.ContainerEventType && (string(event.Action) == "die" || string(event.Action) == "kill"):
 		serviceID := event.Actor.Attributes["com.docker.swarm.service.id"]
 		nodeID := event.Actor.Attributes["com.docker.swarm.node.id"]
 		if serviceID != "" {
