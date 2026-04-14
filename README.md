@@ -1,26 +1,46 @@
-# swarmex-remediation
+# Swarmex Remediation
 
-Self-healing with escalation chain for Docker Swarm.
+Self-healing with escalation chain and disruption budgets for Docker Swarm services.
 
-## What it does
+Part of [Swarmex](https://github.com/ccvass/swarmex) — enterprise-grade orchestration for Docker Swarm.
 
-Monitors health failures and escalates remediation actions: restart → force-restart → drain node. Detects persistent failure patterns.
+## What It Does
 
-## Why it matters
+Monitors service health and automatically remediates failures through a three-level escalation chain: restart → force-update → drain node. Disruption budgets ensure that remediation actions never take down more instances than allowed.
 
-Kubernetes restarts unhealthy pods automatically. Docker Swarm does too, but has no escalation — if a container keeps failing, Swarm just keeps restarting it forever. This controller adds intelligent escalation: after N failures, force-restart the task; after 2N, drain the entire node.
-
-## Verified
-
-- ✅ Detects container health_status and die/kill events
-- ✅ Failure count with decay (resets after 5min of no failures)
-- ✅ Escalation: restart (1x threshold) → force-restart (2x) → drain node (3x)
-
-## Configuration
+## Labels
 
 ```yaml
 deploy:
   labels:
-    swarmex.remediation.enabled: "true"
-    swarmex.remediation.failure-threshold: "5"
+    swarmex.remediation.enabled: "true"          # Enable self-healing
+    swarmex.remediation.failure-threshold: "3"   # Failures before escalation
+    swarmex.disruption.min-available: "2"        # Min healthy instances required
+    swarmex.disruption.max-unavailable: "1"      # Max instances down at once
 ```
+
+## How It Works
+
+1. Records health check failures per service and tracks failure counts.
+2. On reaching the failure threshold, escalates: first restarts the task.
+3. If failures persist, performs a force-update on the service.
+4. As a last resort, drains the problematic node (never the last manager).
+5. Checks disruption budgets before force-restart and drain to ensure minimum availability.
+
+## Quick Start
+
+```bash
+docker service update \
+  --label-add swarmex.remediation.enabled=true \
+  --label-add swarmex.remediation.failure-threshold=3 \
+  --label-add swarmex.disruption.min-available=2 \
+  my-app
+```
+
+## Verified
+
+Node drained on persistent failures. Drain correctly blocked when it would violate the min-available disruption budget.
+
+## License
+
+Apache-2.0
