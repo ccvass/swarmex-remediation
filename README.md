@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/ccvass/swarmex/main/docs/assets/logo.svg" alt="Swarmex" width="400"></p>
+
 # Swarmex Remediation
 
 Self-healing with escalation chain and disruption budgets for Docker Swarm services.
