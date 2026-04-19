@@ -1,9 +1,7 @@
 <p align="center"><img src="https://raw.githubusercontent.com/ccvass/swarmex/main/docs/assets/logo.svg" alt="Swarmex" width="400"></p>
 
-<p align="center">
-  <a href="https://github.com/ccvass/swarmex-remediation/actions"><img src="https://github.com/ccvass/swarmex-remediation/actions/workflows/publish.yml/badge.svg" alt="Test, Build &amp; Deploy"></a>
-  <a href="https://github.com/ccvass/swarmex-remediation/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ccvass/swarmex-remediation" alt="License"></a>
-</p>
+[![Test, Build & Deploy](https://github.com/ccvass/swarmex-remediation/actions/workflows/publish.yml/badge.svg)](https://github.com/ccvass/swarmex-remediation/actions/workflows/publish.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 # Swarmex Remediation
 
