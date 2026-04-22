@@ -37,17 +37,23 @@ const (
 	decayInterval    = 5 * time.Minute // failures decay after this period of no new failures
 )
 
+const (
+	// minServicesForDrain is the minimum number of distinct services that must
+	// fail on the same node before a drain is considered. This prevents a
+	// single misbehaving app from taking down an entire node.
+	minServicesForDrain = 3
+)
+
 type failureRecord struct {
 	count    int
 	lastSeen time.Time
-	nodeID   string
 }
 
 // Remediator monitors health failures and escalates remediation actions.
 type Remediator struct {
 	client   *client.Client
 	logger   *slog.Logger
-	failures map[string]*failureRecord // keyed by service ID
+	failures map[string]*failureRecord // keyed by "serviceID:nodeID"
 	mu       sync.Mutex
 }
 
@@ -80,10 +86,11 @@ func (r *Remediator) recordFailure(ctx context.Context, serviceID, nodeID string
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	rec, ok := r.failures[serviceID]
+	key := serviceID + ":" + nodeID
+	rec, ok := r.failures[key]
 	if !ok {
 		rec = &failureRecord{}
-		r.failures[serviceID] = rec
+		r.failures[key] = rec
 	}
 
 	// Decay: reset if last failure was long ago
@@ -93,7 +100,6 @@ func (r *Remediator) recordFailure(ctx context.Context, serviceID, nodeID string
 
 	rec.count++
 	rec.lastSeen = time.Now()
-	rec.nodeID = nodeID
 
 	// Check if service has remediation enabled
 	svc, _, err := r.client.ServiceInspectWithRaw(ctx, serviceID, types.ServiceInspectOptions{})
@@ -116,6 +122,16 @@ func (r *Remediator) recordFailure(ctx context.Context, serviceID, nodeID string
 	}
 
 	level := r.determineLevel(rec.count, threshold)
+
+	// Never drain for a single service — only restart/force-restart
+	if level == LevelDrainNode {
+		if !r.isNodeLevelFailure(nodeID) {
+			r.logger.Warn("drain downgraded to force-restart — only one service failing on node",
+				"service", svc.Spec.Name, "node", nodeID, "failures", rec.count)
+			level = LevelForceRestart
+		}
+	}
+
 	r.logger.Error("escalating remediation",
 		"service", svc.Spec.Name, "level", level.String(), "failures", rec.count, "node", nodeID)
 
@@ -131,6 +147,19 @@ func (r *Remediator) recordFailure(ctx context.Context, serviceID, nodeID string
 	case LevelDrainNode:
 		r.drainNode(ctx, nodeID, svc.Spec.Name)
 	}
+}
+
+// isNodeLevelFailure checks if multiple distinct services are failing on the
+// same node, which indicates a node-level problem rather than an app bug.
+func (r *Remediator) isNodeLevelFailure(nodeID string) bool {
+	suffix := ":" + nodeID
+	distinctServices := 0
+	for key, rec := range r.failures {
+		if len(key) > len(suffix) && key[len(key)-len(suffix):] == suffix && rec.count >= defaultThreshold {
+			distinctServices++
+		}
+	}
+	return distinctServices >= minServicesForDrain
 }
 
 func (r *Remediator) determineLevel(count, threshold int) EscalationLevel {
