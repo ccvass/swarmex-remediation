@@ -13,6 +13,8 @@ Part of [Swarmex](https://github.com/ccvass/swarmex) — enterprise-grade orches
 
 Monitors service health and automatically remediates failures through a three-level escalation chain: restart → force-update → drain node. Disruption budgets ensure that remediation actions never take down more instances than allowed.
 
+**v1.1.0**: Tracks failures per service+node pair. Only drains a node when 3+ distinct services fail on it (node-level issue). Single-service failures cap at force-restart — never drain.
+
 ## Labels
 
 ```yaml
@@ -26,11 +28,13 @@ deploy:
 
 ## How It Works
 
-1. Records health check failures per service and tracks failure counts.
+1. Records health check failures per service+node pair and tracks failure counts.
 2. On reaching the failure threshold, escalates: first restarts the task.
 3. If failures persist, performs a force-update on the service.
-4. As a last resort, drains the problematic node (never the last manager).
-5. Checks disruption budgets before force-restart and drain to ensure minimum availability.
+4. Drain only triggers when 3+ distinct services fail on the same node (indicates node-level problem, not app bug).
+5. Never drains the last active manager.
+6. Checks disruption budgets before force-restart and drain to ensure minimum availability.
+7. Failure counts decay after 5 minutes of no new failures.
 
 ## Quick Start
 
@@ -44,7 +48,10 @@ docker service update \
 
 ## Verified
 
-Node drained on persistent failures. Drain correctly blocked when it would violate the min-available disruption budget.
+- Drain correctly blocked for single-service failures (downgraded to force-restart)
+- Drain triggers when 3+ services fail on same node
+- Drain blocked when it would violate the min-available disruption budget
+- Never drains the last active manager
 
 ## License
 
